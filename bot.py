@@ -1,12 +1,13 @@
 import os
 import sys
 from datetime import datetime, timedelta
-
+import sqlite3
 import discord
 from discord.ext import commands, tasks
 
 PATH = os.path.dirname(os.path.abspath(__file__))
 
+QUEUE_DB_PATH = PATH + "/alarmqueue.db"
 TOKEN_PATH = PATH + "/token.txt"
 def token(): return [(f.read(), f.close()) for f in [open(TOKEN_PATH)]][0][0]
 
@@ -20,70 +21,77 @@ class Alarm_Queue:
     """
 
     def __init__(self):
-        self.queue = []
+
+        self.connection = sqlite3.connect(QUEUE_DB_PATH)
+        try:
+            self.connection.execute(
+                '''create table alarms(timestamp Integer, userid Integer, channel Integer, name Text)''')
+        except sqlite3.OperationalError:
+            pass
+        self.cursor = self.connection.cursor()
 
     def cancel(self, user, name):
-        for item in self.queue:
-            for target in item["target"]:
-                if target[0] == user and target[2] == name:
-                    item["target"].remove(target)
-                    return True
-        return False
+        """
+        """
+        query = f"delete from alarms where userid = {user}"
+        if not name == "ALL":
+            query += f" and name = '{name}'"
+        print(query)
+        try:
+            self.cursor.execute(query)
+            self.connection.commit()
+            return True
+        except Exception:
+            return False
 
-    def set(self, item: dict):
+    def solve(self, timestamp):
+        self.cursor.execute(
+            f"delete from alarms where timestamp <= {timestamp}")
+
+    def set(self, timestamp, userid, channel, name):
         """
-        Example
-        ---------
-        self.set({"time": TIMESTAMP, "target": [(ctx.author.id , ctx.channel.id , "NAME")]})
         """
-        if self.queue:
-            for i in self.queue:
-                if i["time"] == item["time"]:
-                    i["target"] += item["target"]
-                    return
-                else:
-                    self.queue.append(item)
-                    self.queue.sort(key=lambda x: x["time"])
-                    return
-        else:
-            self.queue.append(item)
-            self.queue.sort(key=lambda x: x["time"])
-            print(self.queue)
-            return
+        self.cursor.execute("insert into alarms (timestamp, userid,channel,name) values (?,?,?,?)",
+                            (timestamp, userid, channel, name))
+        self.connection.commit()
 
     def set_by(self, user) -> list:
-        result = []
-        for i in self.queue:
-            for t in i["target"]:
-                if t[0] == user:
-                    time = datetime.fromtimestamp(float(i["time"]))
-                    t_format = f"{time.hour}:{time.minute}"
-                    result.append((t_format, t[2]))
+        """
+        """
+        self.cursor.execute(
+            f"select * from alarms where userid = {user} order by timestamp")
+        result = self.cursor.fetchall()
+        self.connection.commit()
+        return result
+
+    def time_up(self, timestamp) -> list:
+        """
+        """
+        self.cursor.execute(
+            f"select * from alarms where timestamp <= {timestamp}")
+        result = self.cursor.fetchall()
+        self.connection.commit()
         return result
 
 
 bot = commands.Bot("&")
-queue = Alarm_Queue()
 
 
 @tasks.loop(seconds=1)
 async def check_queue():
     now = int(datetime.timestamp(datetime.now()))
-    if queue.queue:
-        item = queue.queue[0]
-        if item["time"] <= now:
-            time = datetime.fromtimestamp(float(item["time"]))
-            t_format = f"{time.hour}:{time.minute}"
-            for target in item["target"]:
-                target_user = bot.get_user(target[0])
-                target_ch = bot.get_channel(target[1])
-                target_name = target[2]
-                embed = discord.Embed(title="時間です", color=0x00bfff)
-                embed.add_field(name="時刻", value=f"{t_format}", inline=True)
-                embed.add_field(name="アラーム名", value=target_name, inline=True)
-                await target_ch.send(target_user.mention, embed=embed)
-            queue.queue.pop(0)
-            return
+    for item in queue.time_up(now):
+        time = datetime.fromtimestamp(float(now))
+        target_author = bot.get_user(item[1])
+        target_ch = bot.get_channel(item[2])
+        name = item[3]
+        t_format = f"{time.hour}:{time.minute}"
+        embed = discord.Embed(title="時間です", color=0x00bfff)
+        embed.add_field(name="名前", value=name, inline=True)
+        embed.add_field(name="時間", value=t_format, inline=True)
+        await target_ch.send(target_author.mention, embed=embed)
+    queue.solve(now)
+    return
 
 
 @bot.event
@@ -108,18 +116,16 @@ async def alarm(ctx, time, name=None):
         await ctx.send(ctx.author.mention
                        + f"タイマー設定コマンドの形式は ```&alarm [時(24時間表記):分] [通知するアラーム名(任意)]``` ")
         return
+    target_stamp = int(datetime.timestamp(alarm_format(time_h, time_m)))
+    t_format = f"{time_h}:{time_m}"
     if name is not None:
         name = name
     else:
-        name = f"{time_h}:{time_m}"
-    target_stamp = int(datetime.timestamp(alarm_format(time_h, time_m)))
-    t_format = f"{time_h}:{time_m}"
-    queueItem = {"time": target_stamp, "target": [
-        (ctx.author.id, ctx.channel.id, name)]}
-    queue.set(queueItem)
+        name = t_format
+    queue.set(target_stamp, ctx.author.id, ctx.channel.id, name)
     embed = discord.Embed(title="アラームをセットしました", color=0x00bfff)
+    embed.add_field(name="アラーム名", value=name, inline=True)
     embed.add_field(name="時刻", value=t_format, inline=True)
-    embed.add_field(name="名前", value=name, inline=True)
     await ctx.send(embed=embed)
     return
 
@@ -135,7 +141,9 @@ async def alarms(ctx):
     embed = discord.Embed(
         title=f"{ctx.author.name}#{ctx.author.discriminator} さんのアラーム", color=0x00bfff)
     for item in registered_item:
-        embed.add_field(name=item[0], value=item[1], inline=True)
+        time = datetime.fromtimestamp(float(item[0])).strftime("%H:%M")
+        embed.add_field(name="アラーム名", value=item[3], inline=True)
+        embed.add_field(name="時刻", value=time, inline=True)
     await ctx.send(embed=embed)
     return
 
@@ -147,16 +155,11 @@ async def cancel(ctx, name):
     """
     print(f"[Command] @{ctx.author.id} : {ctx.message.content}")
     user = ctx.author.id
-    if queue.cancel(user, name):
+    if queue.cancel(user, name=name):
         await ctx.send(ctx.author.mention + f"アラーム {name} を削除しました")
     else:
         await ctx.send(ctx.author.mention + f"アラーム {name} は存在しません")
     return
-
-
-@bot.command()
-async def reload(ctx):
-    os.execl(sys.executable, sys.executable, queue * sys.argv)
 
 
 def alarm_format(time_h, time_m):
@@ -171,6 +174,7 @@ def alarm_format(time_h, time_m):
     return result
 
 
-if __name__ == "__main__":
-    print(sys.executable, sys.executable, *sys.argv)
-    bot.run(token(), reconnect=True)
+now = int(datetime.timestamp(datetime.now()))
+queue = Alarm_Queue()
+queue.solve(now)
+bot.run(token(), reconnect=True)
