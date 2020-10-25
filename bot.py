@@ -36,7 +36,6 @@ class Alarm_Queue:
         query = f"delete from alarms where userid = {user}"
         if not name == "ALL":
             query += f" and name = '{name}'"
-        print(query)
         try:
             self.cursor.execute(query)
             self.connection.commit()
@@ -74,7 +73,7 @@ class Alarm_Queue:
         return result
 
 
-bot = commands.Bot("&")
+bot = commands.Bot(("&"))
 
 
 @tasks.loop(seconds=1)
@@ -87,8 +86,7 @@ async def check_queue():
         name = item[3]
         t_format = f"{time.hour}:{time.minute}"
         embed = discord.Embed(title="時間です", color=0x00bfff)
-        embed.add_field(name="名前", value=name, inline=True)
-        embed.add_field(name="時間", value=t_format, inline=True)
+        embed.add_field(name=f"**{name}**", value=t_format, inline=True)
         await target_ch.send(target_author.mention, embed=embed)
     queue.solve(now)
     return
@@ -142,8 +140,8 @@ async def alarms(ctx):
         title=f"{ctx.author.name}#{ctx.author.discriminator} さんのアラーム", color=0x00bfff)
     for item in registered_item:
         time = datetime.fromtimestamp(float(item[0])).strftime("%H:%M")
-        embed.add_field(name="アラーム名", value=item[3], inline=True)
-        embed.add_field(name="時刻", value=time, inline=True)
+        embed.add_field(
+            name=f"{item[3]}", value=f"{time}", inline=True)
     await ctx.send(embed=embed)
     return
 
@@ -156,9 +154,13 @@ async def cancel(ctx, name):
     print(f"[Command] @{ctx.author.id} : {ctx.message.content}")
     user = ctx.author.id
     if queue.cancel(user, name=name):
-        await ctx.send(ctx.author.mention + f"アラーム {name} を削除しました")
+        embed = discord.Embed(title="削除成功", color=0x00bfff)
+        embed.description = f"アラーム {name} を削除しました"
+        await ctx.send(embed=embed)
     else:
-        await ctx.send(ctx.author.mention + f"アラーム {name} は存在しません")
+        embed = discord.Embed(title="削除失敗", color=0xff0000)
+        embed.description = f"アラーム {name} は存在しません"
+        await ctx.send(embed=embed)
     return
 
 
