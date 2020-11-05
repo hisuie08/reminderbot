@@ -23,7 +23,7 @@ class Alarm_Queue:
 
     def __init__(self):
 
-        self.connection = sqlite3.connect(QUEUE_DB_PATH)
+        self.connection = sqlite3.connect(QUEUE_DB_PATH, isolation_level=None)
         try:
             self.connection.execute(
                 '''create table alarms(timestamp Integer, userid Integer, channel Integer, name Text)''')
