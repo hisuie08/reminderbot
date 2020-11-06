@@ -2,7 +2,10 @@ import aiohttp
 import os
 import sys
 from datetime import datetime, timedelta
-import sqlite3
+try:
+    import pysqlite3
+except ImportError:
+    import sqlite3
 import discord
 from discord.ext import commands, tasks
 
@@ -177,7 +180,8 @@ def alarm_format(time_h, time_m):
     return result
 
 
-now = int(datetime.timestamp(datetime.now()))
-queue = Alarm_Queue()
-queue.solve(now)
-bot.run(token(), reconnect=True)
+if __name__ == "__main__":
+    now = int(datetime.timestamp(datetime.now()))
+    queue = Alarm_Queue()
+    queue.solve(now)
+    bot.run(token(), reconnect=True)
